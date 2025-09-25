@@ -71,11 +71,13 @@
 	function prev() {
 		if (idx > 0) {
 			idx--;
+			imageUrls.length = 0; // clear images when going back
 		}
 	}
 	function next() {
 		if (idx < records.length - 1) {
 			idx++;
+			imageUrls.length = 0; // clear images when going forward
 		}
 	}
 
@@ -143,7 +145,7 @@
 					disabled={idx === records.length - 1}>Next →</button
 				>
 			</div>
-			<span class="muted"
+			<span class="flex w-128 justify-center"
 				>Record
 				<input
 					type="number"
