@@ -13,7 +13,8 @@
 		saveIdentification,
 		deleteRecord,
 		flagRecord,
-		deleteDet
+		deleteDet,
+		preloadImages
 	} from '$lib';
 
 	const baseApiUrl = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
@@ -77,6 +78,11 @@
 				currentRecordVMRecords = [];
 			}
 		}
+		preloadImages(
+			records[currentIndex + 1]?.observation.taxaObserved[0]?.associatedMedia?.map(
+				(m) => m.publicURL
+			) || []
+		);
 	});
 
 	(async function () {
@@ -102,7 +108,8 @@
 			valueField: 'sp_code',
 			labelField: 'scientific_name',
 			searchField: 'scientific_name',
-			loadThrottle: 400,
+			sortField: [{ field: '$order' }, { field: '$score' }],
+			loadThrottle: 600,
 			// fetch remote data
 			load: function (query, callback) {
 				var url = '/api/taxa?q=' + encodeURIComponent(query);
@@ -153,7 +160,6 @@
 					vmRecords.length == 1 &&
 					vmRecords.some((r) => r.scientific_name.toLowerCase() == 'araneae indet.')
 				) {
-					console.log(vmRecords[0]);
 					currentIndex = localIndex;
 					searching = false;
 					break;
@@ -162,6 +168,14 @@
 				}
 			}
 		}
+
+		let imageURLs =
+			records[localIndex]?.observation?.taxaObserved?.[0]?.associatedMedia?.map(
+				(m) => m.publicURL
+			) || [];
+		console.log('got', imageURLs.length, 'images for next record');
+		preloadImages(imageURLs);
+
 		searching = false;
 		if (localIndex >= records.length - 1) {
 			noMore = true;
@@ -433,7 +447,7 @@
 									{det.scientific_name}
 									<button
 										onclick={handleDeleteDet}
-										class="text-gray-400 hover:cursor-pointer"
+										class="ml-2 text-gray-400 hover:cursor-pointer"
 										aria-label="Delete identification"
 										data-det-index={index}
 										><svg
@@ -443,7 +457,7 @@
 											width="24px"
 											fill="currentColor"
 											><path
-												d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"
+												d="M280-120q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280Zm400-600H280v520h400v-520ZM360-280h80v-360h-80v360Zm160 0h80v-360h-80v360ZM280-720v520-520Z"
 											/></svg
 										></button
 									>
@@ -501,7 +515,7 @@
 </main>
 <dialog class="relative m-auto" bind:this={imageDialog}>
 	<div class="relative">
-		<img id={currentImageId} src={clickedImageUrl} alt="large view" />
+		<img id={currentImageId} src={clickedImageUrl} alt="large view" class="max-h-screen" />
 	</div>
 	<button
 		class="absolute top-8 right-8 block rounded bg-gray-100 px-4 py-2 text-gray-400 hover:cursor-pointer"

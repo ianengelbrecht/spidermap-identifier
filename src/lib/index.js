@@ -104,3 +104,13 @@ export async function flagRecord(recordKey) {
   if (!recordKey) throw new Error('No record key provided');
   await set(ref(db, 'records/' + recordKey + '/flagged'), true);
 }
+
+export function preloadImages(urls) {
+  return Promise.all(urls.map(src => {
+    const img = new Image();
+    img.loading = 'eager';
+    img.decoding = 'async';
+    img.src = src;
+    return img.decode?.().catch(() => { }); // don’t block on errors
+  }));
+}
