@@ -114,3 +114,11 @@ export function preloadImages(urls) {
     return img.decode?.().catch(() => { }); // don’t block on errors
   }));
 }
+
+export async function getVMTaxonRecords(name) {
+  const response = await fetch(`${baseApiUrl}/records?name=${encodeURIComponent(name)}`);
+  if (!response.ok) {
+    throw new Error(response.statusText);
+  }
+  return response.json();
+}

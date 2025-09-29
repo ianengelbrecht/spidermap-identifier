@@ -1,4 +1,5 @@
 <script>
+	import { setOptions, importLibrary } from '@googlemaps/js-api-loader';
 	import { onMount } from 'svelte';
 	import TomSelect from 'tom-select';
 	import 'tom-select/dist/css/tom-select.css';
@@ -14,21 +15,24 @@
 		deleteRecord,
 		flagRecord,
 		deleteDet,
-		preloadImages
+		preloadImages,
+		getVMTaxonRecords
 	} from '$lib';
+	import { set } from 'firebase/database';
 
 	const baseApiUrl = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+	const mapsApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
 
 	const lastRecordIndex = Number(localStorage.getItem('lastRecordIndex')) || 0;
 
-	let records = $state([]); // for storing records we've seen
+	let records = $state([]);
 	let currentIndex = $state(lastRecordIndex);
 	let currentRecord = $state(null);
-	let error = $state(null);
 	let imageURLs = $state([]);
-	let fetching = $state(true);
+	let fetching = $state(false);
 	let searching = $state(false);
 	let noMore = $state(false);
+	let error = $state(null);
 	let currentRecordVMRecords = $state([]);
 
 	let displayIdx = $derived(currentIndex + 1);
@@ -44,6 +48,33 @@
 	let detNotes = $state('');
 	let savingDet = $state(false);
 
+	setOptions({
+		key: mapsApiKey
+	});
+	let showMap = $state(false);
+
+	let uniqueBSANames = $derived(
+		Array.from(
+			new Set(
+				records
+					.map((r) => {
+						const dets = r?.observation?.taxaObserved?.[0]?.identifications || [];
+						if (dets.length > 0) {
+							return dets.map((d) => d.scientific_name);
+						} else {
+							return [];
+						}
+					})
+					.flat()
+			)
+		).sort()
+	); // Unique BSA taxon names from all records
+
+	let mapEl = $state(null);
+	let map;
+	let markers = [];
+	let selectedName = $state(null);
+
 	let mapDialog;
 	let recordCoordinates = $derived(
 		currentRecord?.observation?.location?.decimalLatitude &&
@@ -51,6 +82,8 @@
 			? `${Number(currentRecord.observation.location.decimalLatitude).toFixed(6)},${Number(currentRecord.observation.location.decimalLongitude).toFixed(6)}`
 			: null
 	);
+
+	let vmTheraphosids = $state([]); // VM records that are Theraphosidae
 
 	$effect(async () => {
 		clearSelect();
@@ -85,23 +118,35 @@
 		);
 	});
 
-	(async function () {
-		try {
-			records = await fetchAllFirebaseRecords();
-			console.log('fetched', records.length, 'records');
-			if (records.length > 0) {
-				currentRecord = records[currentIndex];
-				imageURLs =
-					currentRecord?.observation?.taxaObserved?.[0]?.associatedMedia?.map((m) => m) || [];
-			}
-		} catch (e) {
-			error = e;
-		} finally {
-			fetching = false;
-		}
-	})();
-
 	onMount(() => {
+		fetching = true;
+		fetchAllFirebaseRecords()
+			.then((allRecords) => {
+				records = allRecords;
+				if (records.length > 0) {
+					currentRecord = records[currentIndex];
+					imageURLs =
+						currentRecord?.observation?.taxaObserved?.[0]?.associatedMedia?.map((m) => m) || [];
+				}
+			})
+			.catch((e) => {
+				error = e;
+				console.error('Error fetching records:', e);
+			})
+			.finally(() => {
+				fetching = false;
+			});
+
+		const position = { lat: -24.815156, lng: 24.467937 };
+		importLibrary('maps').then(({ Map }) => {
+			map = new Map(mapEl, {
+				zoom: 5,
+				center: position,
+				mapId: 'DEMO_MAP_ID',
+				gestureHandling: 'greedy'
+			});
+		});
+
 		tomSelect = new TomSelect('#taxonname-select', {
 			create: false,
 			placeholder: 'Type to search for a taxon',
@@ -309,6 +354,67 @@
 		noMore = false;
 		currentIndex = 0;
 	}
+
+	async function handleNameClick(name) {
+		selectedName = name;
+		// get all bsa records with that name
+		const bsaRecords = records.filter((r) =>
+			r?.observation?.taxaObserved?.[0]?.identifications?.some(
+				(d) => d.scientific_name.toLowerCase() === name.toLowerCase()
+			)
+		);
+
+		// clear all markers on the map
+		markers.forEach((marker) => marker.setMap(null));
+		markers.length = 0;
+
+		const vmRecords = await getVMTaxonRecords(name);
+		console.log(`Found ${vmRecords.length} VM records for taxon ${name}`);
+		for (const r of vmRecords) {
+			const lat = r?.Decimal_latitude;
+			const lng = r?.Decimal_longitude;
+			if (lat && lng) {
+				const marker = new google.maps.Marker({
+					position: { lat: Number(lat), lng: Number(lng) },
+					map: map,
+					title: r.Vm_number,
+					icon: {
+						path: google.maps.SymbolPath.CIRCLE,
+						scale: 6, // size of the circle
+						fillColor: '#00f', // fill color
+						fillOpacity: 0.8,
+						strokeWeight: 1,
+						strokeColor: '#fff' // border color
+					}
+				});
+				markers.push(marker);
+			} else {
+				console.log('No coordinates for VM record:', r);
+			}
+		}
+
+		// add a marker for each bsa record with that name
+		bsaRecords.forEach((r) => {
+			const lat = r?.observation?.location?.decimalLatitude;
+			const lng = r?.observation?.location?.decimalLongitude;
+			if (lat && lng) {
+				const marker = new google.maps.Marker({
+					position: { lat: Number(lat), lng: Number(lng) },
+					map: map,
+					title: r.key,
+					icon: {
+						path: google.maps.SymbolPath.CIRCLE,
+						scale: 6, // size of the circle
+						fillColor: '#00f', // fill color
+						fillOpacity: 0.8,
+						strokeWeight: 1,
+						strokeColor: '#fff' // border color
+					}
+				});
+				markers.push(marker);
+			}
+		});
+	}
 </script>
 
 <main class="flex h-screen w-screen flex-col p-4">
@@ -322,13 +428,16 @@
 			<span class="text-xl font-semibold text-amber-700 italic">Record identifier</span>
 		</a>
 		<ul class="flex space-x-4">
-			<li><a href="/">Home</a></li>
-			<li><a href="/about">About</a></li>
-			<li><a href="/contact">Contact</a></li>
+			<li>
+				<button class="hover:cursor-pointer" onclick={() => (showMap = false)}>Identify</button>
+			</li>
+			<li><button class="hover:cursor-pointer" onclick={() => (showMap = true)}>Map</button></li>
 		</ul>
 	</nav>
 	<section
+		id="record-viewer"
 		class="flex w-full flex-grow flex-col items-center justify-center rounded border border-gray-200"
+		class:hidden={showMap}
 	>
 		{#if fetching}
 			<p>Loading records...</p>
@@ -512,7 +621,26 @@
 			</div>
 		{/if}
 	</section>
+	<section
+		id="map-section"
+		class="h-full w-full rounded border border-gray-200"
+		class:hidden={!showMap}
+	>
+		<div class="flex h-full">
+			<div class="h-full w-1/5">
+				<ul class="h-full overflow-y-scroll">
+					{#each uniqueBSANames as name}
+						<li class="p-2" class:bg-blue-200={name === selectedName}>
+							<button onclick={() => handleNameClick(name)}>{name}</button>
+						</li>
+					{/each}
+				</ul>
+			</div>
+			<div id="map" class="h-full flex-1 border" bind:this={mapEl}>This is a map</div>
+		</div>
+	</section>
 </main>
+<!-- Image Dialog -->
 <dialog class="relative m-auto" bind:this={imageDialog}>
 	<div class="relative">
 		<img id={currentImageId} src={clickedImageUrl} alt="large view" class="max-h-screen" />
@@ -534,6 +662,7 @@
 		>
 	</button>
 </dialog>
+<!-- Identification Dialog -->
 <dialog class="relative m-auto w-1/3 rounded p-4" bind:this={detDialog}>
 	<h2 class="text-xl font-semibold">Add a new identification:</h2>
 	<div class="flex gap-1">
@@ -611,13 +740,14 @@
 			</span>
 		{:else}
 			<button
-				class="mt-2 w-16 rounded border bg-blue-400 p-2 text-white hover:cursor-pointer"
+				class="mt-2 w-16 rounded border bg-blue-500 p-2 text-white hover:cursor-pointer hover:bg-blue-400"
 				type="button"
 				onclick={handleSaveIdentification}>Save</button
 			>
 		{/if}
 	</div>
 </dialog>
+<!-- Map Dialog -->
 <dialog bind:this={mapDialog} class="relative m-auto rounded p-1">
 	{#if recordCoordinates}
 		<img
