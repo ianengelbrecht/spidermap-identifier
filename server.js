@@ -88,17 +88,27 @@ app.get('/taxa/:sp_code', async (req, res) => {
   }
 });
 
+// fetches theraphosidae or the name requested
 app.get('/records', async (req, res) => {
   console.log('Received request at /records for', req.query.name);
   const name = req.query.name || '';
-  if (name.length < 2) {
-    throw new Error('Query too short');
+
+  let sql = 'SELECT * FROM `vm_data` d JOIN `vm_taxonomy` t ON `d`.`sp_code` = `t`.`sp_code`';
+  const params = [];
+
+  if (name && name.trim() !== '') {
+    sql += ' WHERE t.scientific_name = ?';
+    params.push(name);
+  }
+  else {
+    sql += ' WHERE t.family = ?';
+    params.push('Theraphosidae');
   }
 
   try {
     const [results] = await pool.execute(
-      'SELECT * FROM `vm_data` d JOIN `vm_taxonomy` t ON `d`.`sp_code` = `t`.`sp_code` WHERE `t`.`scientific_name` = ?',
-      [name]
+      sql,
+      params
     );
     if (results.length === 0) {
       res.status(404).json({ error: 'Taxon not found' });

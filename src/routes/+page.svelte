@@ -16,7 +16,8 @@
 		flagRecord,
 		deleteDet,
 		preloadImages,
-		getVMTaxonRecords
+		getVMTaxonRecords,
+		setMarkers
 	} from '$lib';
 	import { set } from 'firebase/database';
 
@@ -83,8 +84,7 @@
 			: null
 	);
 
-	let vmTheraphosids = $state([]); // VM records that are Theraphosidae
-
+	// updates when currentIndex changes
 	$effect(async () => {
 		clearSelect();
 		detSpCode = null;
@@ -118,33 +118,30 @@
 		);
 	});
 
-	onMount(() => {
+	onMount(async () => {
 		fetching = true;
-		fetchAllFirebaseRecords()
-			.then((allRecords) => {
-				records = allRecords;
-				if (records.length > 0) {
-					currentRecord = records[currentIndex];
-					imageURLs =
-						currentRecord?.observation?.taxaObserved?.[0]?.associatedMedia?.map((m) => m) || [];
-				}
-			})
-			.catch((e) => {
-				error = e;
-				console.error('Error fetching records:', e);
-			})
-			.finally(() => {
-				fetching = false;
-			});
+		try {
+			records = await fetchAllFirebaseRecords();
+		} catch (e) {
+			error = e;
+			console.error('Error fetching records:', e);
+		} finally {
+			fetching = false;
+		}
+
+		if (records.length > 0) {
+			currentRecord = records[currentIndex];
+			imageURLs =
+				currentRecord?.observation?.taxaObserved?.[0]?.associatedMedia?.map((m) => m) || [];
+		}
 
 		const position = { lat: -24.815156, lng: 24.467937 };
-		importLibrary('maps').then(({ Map }) => {
-			map = new Map(mapEl, {
-				zoom: 5,
-				center: position,
-				mapId: 'DEMO_MAP_ID',
-				gestureHandling: 'greedy'
-			});
+		const { Map } = await importLibrary('maps');
+		map = new Map(mapEl, {
+			zoom: 5,
+			center: position,
+			mapId: 'DEMO_MAP_ID',
+			gestureHandling: 'greedy'
 		});
 
 		tomSelect = new TomSelect('#taxonname-select', {
@@ -358,62 +355,29 @@
 	async function handleNameClick(name) {
 		selectedName = name;
 		// get all bsa records with that name
-		const bsaRecords = records.filter((r) =>
-			r?.observation?.taxaObserved?.[0]?.identifications?.some(
-				(d) => d.scientific_name.toLowerCase() === name.toLowerCase()
-			)
+		const bsaRecords = records.filter(
+			(r) =>
+				r?.observation?.taxaObserved?.[0]?.identifications?.some(
+					(d) => d.scientific_name.toLowerCase() === name.toLowerCase()
+				) && !r.flagged
 		);
+		const vmRecords = [];
+		try {
+			const results = await getVMTaxonRecords(name);
+			vmRecords.push(...results);
+		} catch (e) {
+			console.error('error fetching VM records:', e);
+		}
 
-		// clear all markers on the map
-		markers.forEach((marker) => marker.setMap(null));
-		markers.length = 0;
-
-		const vmRecords = await getVMTaxonRecords(name);
-		console.log(`Found ${vmRecords.length} VM records for taxon ${name}`);
-		for (const r of vmRecords) {
-			const lat = r?.Decimal_latitude;
-			const lng = r?.Decimal_longitude;
-			if (lat && lng) {
-				const marker = new google.maps.Marker({
-					position: { lat: Number(lat), lng: Number(lng) },
-					map: map,
-					title: r.Vm_number,
-					icon: {
-						path: google.maps.SymbolPath.CIRCLE,
-						scale: 6, // size of the circle
-						fillColor: '#00f', // fill color
-						fillOpacity: 0.8,
-						strokeWeight: 1,
-						strokeColor: '#fff' // border color
-					}
-				});
-				markers.push(marker);
-			} else {
-				console.log('No coordinates for VM record:', r);
+		function showRecord(key) {
+			const index = records.findIndex((rec) => rec.key === key);
+			if (index !== -1) {
+				currentIndex = index;
+				showMap = false;
 			}
 		}
 
-		// add a marker for each bsa record with that name
-		bsaRecords.forEach((r) => {
-			const lat = r?.observation?.location?.decimalLatitude;
-			const lng = r?.observation?.location?.decimalLongitude;
-			if (lat && lng) {
-				const marker = new google.maps.Marker({
-					position: { lat: Number(lat), lng: Number(lng) },
-					map: map,
-					title: r.key,
-					icon: {
-						path: google.maps.SymbolPath.CIRCLE,
-						scale: 6, // size of the circle
-						fillColor: '#00f', // fill color
-						fillOpacity: 0.8,
-						strokeWeight: 1,
-						strokeColor: '#fff' // border color
-					}
-				});
-				markers.push(marker);
-			}
-		});
+		setMarkers(map, bsaRecords, vmRecords, markers, showRecord);
 	}
 </script>
 

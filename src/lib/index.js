@@ -115,10 +115,95 @@ export function preloadImages(urls) {
   }));
 }
 
-export async function getVMTaxonRecords(name) {
-  const response = await fetch(`${baseApiUrl}/records?name=${encodeURIComponent(name)}`);
+export async function getVMTaxonRecords(name = null) {
+  let url = `${baseApiUrl}/records`;
+  if (name) {
+    url += `?name=${encodeURIComponent(name)}`;
+  }
+  const response = await fetch(url);
   if (!response.ok) {
     throw new Error(response.statusText);
   }
   return response.json();
+}
+
+// Default marker icon
+const defaultBSAIcon = {
+  path: google.maps.SymbolPath.CIRCLE,
+  scale: 6, // size of the circle
+  fillColor: '#00f', // fill color
+  fillOpacity: 0.8,
+  strokeWeight: 1,
+  strokeColor: '#fff' // border color
+};
+
+// Clicked marker icon (wide red border)
+const clickedBSAIcon = {
+  path: google.maps.SymbolPath.CIRCLE,
+  scale: 6, // size of the circle
+  fillColor: '#00f', // fill color
+  fillOpacity: 0.8,
+  strokeWeight: 4,
+  strokeColor: 'red' // border color
+};
+let lastClickedMarker = null;
+export function setMarkers(map, bsaRecords, vmRecords, markersArray, showRecord) {
+  // clear all markers on the map
+  markersArray.forEach((marker) => marker.setMap(null));
+  markersArray.length = 0;
+
+  for (const r of vmRecords) {
+    const lat = r?.Decimal_latitude;
+    const lng = r?.Decimal_longitude;
+    if (lat && lng) {
+      const marker = new google.maps.Marker({
+        position: { lat: Number(lat), lng: Number(lng) },
+        map: map,
+        title: r.Vm_number.toString(),
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 6, // size of the circle
+          fillColor: '#398f0e', // fill color
+          fillOpacity: 0.8,
+          strokeWeight: 1,
+          strokeColor: '#fff' // border color
+        },
+        clickable: false
+      });
+      markersArray.push(marker);
+    } else {
+      console.log('No coordinates for VM record:', r);
+    }
+  }
+
+  // add a marker for each bsa record with that name
+  bsaRecords.forEach((r) => {
+    const lat = r?.observation?.location?.decimalLatitude;
+    const lng = r?.observation?.location?.decimalLongitude;
+    if (lat && lng) {
+      const marker = new google.maps.Marker({
+        position: { lat: Number(lat), lng: Number(lng) },
+        map: map,
+        title: r.key,
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 6, // size of the circle
+          fillColor: '#00f', // fill color
+          fillOpacity: 0.8,
+          strokeWeight: 1,
+          strokeColor: '#fff' // border color
+        }
+      });
+
+      marker.addListener("click", () => {
+        if (lastClickedMarker) {
+          lastClickedMarker.setIcon(defaultBSAIcon);
+        }
+        marker.setIcon(clickedBSAIcon);
+        lastClickedMarker = marker;
+        showRecord(r.key);
+      });
+      markersArray.push(marker);
+    }
+  });
 }
