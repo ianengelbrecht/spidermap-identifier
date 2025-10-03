@@ -14,15 +14,16 @@
 		saveIdentification,
 		deleteRecord,
 		flagRecord,
+		unflagRecord,
 		deleteDet,
 		preloadImages,
 		getVMTaxonRecords,
+		setMap,
 		setMarkers
 	} from '$lib';
 	import { set } from 'firebase/database';
 
 	const baseApiUrl = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
-	const mapsApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
 
 	const lastRecordIndex = Number(localStorage.getItem('lastRecordIndex')) || 0;
 
@@ -32,6 +33,8 @@
 	let imageURLs = $state([]);
 	let fetching = $state(false);
 	let searching = $state(false);
+	let showFlagged = $state(false);
+	let showIndetOnly = $state(false);
 	let noMore = $state(false);
 	let error = $state(null);
 	let currentRecordVMRecords = $state([]);
@@ -49,9 +52,6 @@
 	let detNotes = $state('');
 	let savingDet = $state(false);
 
-	setOptions({
-		key: mapsApiKey
-	});
 	let showMap = $state(false);
 
 	let uniqueBSANames = $derived(
@@ -136,13 +136,7 @@
 		}
 
 		const position = { lat: -24.815156, lng: 24.467937 };
-		const { Map } = await importLibrary('maps');
-		map = new Map(mapEl, {
-			zoom: 5,
-			center: position,
-			mapId: 'DEMO_MAP_ID',
-			gestureHandling: 'greedy'
-		});
+		map = setMap(mapEl, position);
 
 		tomSelect = new TomSelect('#taxonname-select', {
 			create: false,
@@ -168,12 +162,47 @@
 	});
 
 	async function prev() {
-		if (currentIndex > 0) {
-			currentIndex--;
+		if (showFlagged) {
+			let searchIndex = currentIndex;
+			while (searchIndex > 0) {
+				searchIndex--;
+				if (records[searchIndex]?.flagged) {
+					break;
+				}
+			}
+			currentIndex = searchIndex;
+		} else {
+			if (currentIndex > 0) {
+				currentIndex--;
+			}
 		}
 	}
 
 	async function next() {
+		// if showing flagged, just go to next flagged
+		if (showFlagged) {
+			let searchIndex = currentIndex;
+			while (searchIndex < records.length - 1) {
+				searchIndex++;
+				if (records[searchIndex]?.flagged) {
+					break;
+				}
+			}
+			currentIndex = searchIndex;
+			return;
+		}
+
+		if (!showIndetOnly) {
+			if (currentIndex < records.length - 1) {
+				currentIndex++;
+				return;
+			} else {
+				noMore = true;
+				return;
+			}
+		}
+
+		// otherwise, search for next record without dets
 		searching = true;
 		let localIndex = currentIndex + 1;
 		while (localIndex < records.length - 1) {
@@ -200,7 +229,9 @@
 
 				if (
 					vmRecords.length == 1 &&
-					vmRecords.some((r) => r.scientific_name.toLowerCase() == 'araneae indet.')
+					vmRecords.some((r) =>
+						r.identifications.some((d) => d.scientific_name.toLowerCase() == 'araneae indet.')
+					)
 				) {
 					currentIndex = localIndex;
 					searching = false;
@@ -224,6 +255,16 @@
 		}
 	}
 
+	function handleShowIndexChange() {
+		if (displayIdx < 1) {
+			displayIdx = 1;
+		} else if (displayIdx > records.length) {
+			displayIdx = records.length;
+		}
+		currentIndex = displayIdx - 1;
+		showFlagged = false;
+	}
+
 	async function handleCopyCoords() {
 		if (recordCoordinates) {
 			navigator.clipboard.writeText(recordCoordinates).then(() => {
@@ -240,7 +281,7 @@
 	}
 
 	async function handleSaveIdentification() {
-		if (!detSpCode && !detOtherTaxon) {
+		if (!detSpCode && !detOtherTaxon && !detOtherTaxon.trim()) {
 			return;
 		}
 		savingDet = true;
@@ -252,7 +293,7 @@
 			} else {
 				taxonDetails = {
 					sp_code: 'OTHER',
-					scientific_name: detOtherTaxon,
+					scientific_name: detOtherTaxon.trim(),
 					family: 'other',
 					taxonomic_authority: ''
 				};
@@ -287,10 +328,22 @@
 	async function handleFlagRecord() {
 		try {
 			await flagRecord(currentRecord.key);
+			currentRecord.flagged = true;
 			alert('Record flagged');
 		} catch (error) {
 			console.error('Error flagging record:', error);
 			alert('Failed to flag record: ' + error.message);
+		}
+	}
+
+	async function handleUnflagRecord() {
+		try {
+			await unflagRecord(currentRecord.key);
+			delete currentRecord.flagged;
+			alert('Record unflagged');
+		} catch (error) {
+			console.error('Error unflagging record:', error);
+			alert('Failed to unflag record: ' + error.message);
 		}
 	}
 
@@ -433,15 +486,60 @@
 					class="mx-2 w-24 rounded border border-gray-200 px-2 py-1 text-center"
 					bind:value={displayIdx}
 					min="1"
-					onchange={() => (currentIndex = displayIdx - 1)}
+					onchange={handleShowIndexChange}
 				/>
-				of {records.length} records</span
-			>
+				of {records.length} records
+				<!-- show flagged button -->
+				<button
+					class="rounded text-gray-400 hover:cursor-pointer"
+					class:bg-blue-500={showFlagged}
+					class:text-white={showFlagged}
+					aria-label="show flagged"
+					title="show flagged"
+					onclick={() => (showFlagged = !showFlagged)}
+				>
+					<svg
+						xmlns="http://www.w3.org/2000/svg"
+						height="24px"
+						viewBox="0 -960 960 960"
+						width="24px"
+						fill="currentColor"
+						><path
+							d="M200-120v-640q0-33 23.5-56.5T280-840h400q33 0 56.5 23.5T760-760v640L480-240 200-120Zm80-122 200-86 200 86v-518H280v518Zm0-518h400-400Z"
+						/></svg
+					>
+				</button>
+				<!-- show indet button -->
+				<button
+					class="rounded text-gray-400 hover:cursor-pointer"
+					class:bg-blue-500={showIndetOnly}
+					class:text-white={showIndetOnly}
+					aria-label="show indet"
+					title="show indet"
+					onclick={() => (showIndetOnly = !showIndetOnly)}
+				>
+					<svg
+						xmlns="http://www.w3.org/2000/svg"
+						height="24px"
+						viewBox="0 -960 960 960"
+						width="24px"
+						fill="currentColor"
+						><path
+							d="M424-320q0-81 14.5-116.5T500-514q41-36 62.5-62.5T584-637q0-41-27.5-68T480-732q-51 0-77.5 31T365-638l-103-44q21-64 77-111t141-47q105 0 161.5 58.5T698-641q0 50-21.5 85.5T609-475q-49 47-59.5 71.5T539-320H424Zm56 240q-33 0-56.5-23.5T400-160q0-33 23.5-56.5T480-240q33 0 56.5 23.5T560-160q0 33-23.5 56.5T480-80Z"
+						/></svg
+					>
+				</button>
+			</span>
 
 			<div class="w-1/2">
 				{#if currentRecord}
 					<div class="grid">
-						<span><strong>Record ID:</strong> {currentRecord.key}</span>
+						<span
+							class="rounded"
+							class:bg-blue-500={currentRecord.flagged}
+							class:text-white={currentRecord.flagged}
+							><strong>Record ID:</strong> {currentRecord.key}</span
+						>
 						<div><strong>Date:</strong> {fmtDate(currentRecord?.observation?.event)}</div>
 						<div>
 							<strong>Observer:</strong>
@@ -537,8 +635,9 @@
 								</div>
 							{/each}
 						</div>
-						<button class="my-2 rounded border p-2" onclick={() => detDialog.showModal()}
-							>Add identification</button
+						<button
+							class="my-2 w-full rounded border p-2 hover:cursor-pointer hover:bg-gray-200"
+							onclick={() => detDialog.showModal()}>Add identification</button
 						>
 					</div>
 					<div class="flex h-32 items-center justify-center overflow-hidden">
@@ -575,9 +674,15 @@
 						<summary>Raw JSON</summary>
 						<pre class="">{JSON.stringify(currentRecord, null, 2)}</pre>
 					</details>
-					<button class="rounded border p-2 hover:cursor-pointer" onclick={handleFlagRecord}
-						>Flag record</button
-					>
+					{#if currentRecord.flagged}
+						<button class="rounded border p-2 hover:cursor-pointer" onclick={handleUnflagRecord}
+							>Unflag record</button
+						>
+					{:else}
+						<button class="rounded border p-2 hover:cursor-pointer" onclick={handleFlagRecord}
+							>Flag record</button
+						>
+					{/if}
 					<button class="rounded border p-2 hover:cursor-pointer" onclick={handleDeleteRecord}
 						>Delete record</button
 					>

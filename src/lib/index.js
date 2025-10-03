@@ -1,3 +1,4 @@
+import { setOptions, importLibrary } from "@googlemaps/js-api-loader";
 import { initializeApp } from 'firebase/app';
 import { getDatabase, ref, query, orderByKey, limitToFirst, startAfter, get, set, update, remove } from 'firebase/database';
 const baseApiUrl = import.meta.env.VITE_API_URL;
@@ -15,6 +16,13 @@ const fbConfig = {
 const app = initializeApp(fbConfig);
 const db = getDatabase(app);
 // const storage = getStorage(app);
+
+const mapsApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+setOptions({
+  key: mapsApiKey
+});
+
+const { Map } = await importLibrary("maps");
 
 export async function fetchAllFirebaseRecords() {
   const q = query(ref(db, "records"), orderByKey());
@@ -58,6 +66,66 @@ export async function fetchSpiderMapRecords(collectorEmail, year, month, day, cl
     throw new Error(response.statusText);
   }
   return response.json();
+}
+
+export async function fetchSpiderMapRecordByVMNumber(vmNumber) {
+  const response = await fetch(`${baseApiUrl}/search?vm_number=${encodeURIComponent(vmNumber)}`);
+  if (!response.ok) {
+    throw new Error(response.statusText);
+  }
+  return response.json();
+}
+
+export function mapSpiderMapRecordToFirebase(record) {
+
+  const associatedMedia = record.images.map(img => {
+    return {
+      publicURL: `${baseApiUrl}/recordImages/${img}`,
+    };
+  });
+
+  const identifications = record.identifications.map(det => {
+    return {
+      dateIdentified: det.date_of_comment || null,
+      identifiedBy: det.comment_by || '',
+      identificationQualifier: det.identification_qualifier || '',
+      scientific_name: det.scientific_name || '',
+      sp_code: det.sp_code || '',
+      identificationRemarks: det.comment || ''
+    }
+  });
+
+  const spiderMapObject = {
+    key: `vm${record.vm_number}`,
+    basisOfRecord: record.basis_of_record || '',
+    observation: {
+      event: {
+        recordedBy: record.collector || '',
+        observerContact: record.collector_email || '',
+        year: record.year_collected ? Number(record.year_collected) : null,
+        month: record.month_collected ? Number(record.month_collected) : null,
+        day: record.day_collected ? Number(record.day_collected) : null,
+      },
+      location: {
+        country: record.country || '',
+        stateProvince: record.state_province || '',
+        closestTown: record.closest_town || '',
+        locality: record.locality || '',
+        decimalLatitude: record.decimal_latitude ? Number(record.decimal_latitude) : null,
+        decimalLongitude: record.decimal_longitude ? Number(record.decimal_longitude) : null
+      },
+      taxaObserved: [
+        {
+          associatedMedia,
+          identifications,
+          occurrenceRemarks: record.related_information || '',
+        }
+      ]
+    }
+  };
+
+  return spiderMapObject;
+
 }
 
 export async function queryTaxa(q) {
@@ -105,6 +173,11 @@ export async function flagRecord(recordKey) {
   await set(ref(db, 'records/' + recordKey + '/flagged'), true);
 }
 
+export async function unflagRecord(recordKey) {
+  if (!recordKey) throw new Error('No record key provided');
+  await remove(ref(db, 'records/' + recordKey + '/flagged'));
+}
+
 export function preloadImages(urls) {
   return Promise.all(urls.map(src => {
     const img = new Image();
@@ -147,6 +220,16 @@ const clickedBSAIcon = {
   strokeColor: 'red' // border color
 };
 let lastClickedMarker = null;
+
+export function setMap(mapEl, position) {
+  return new Map(mapEl, {
+    zoom: 5,
+    center: position,
+    mapId: 'DEMO_MAP_ID',
+    gestureHandling: 'greedy'
+  });
+}
+
 export function setMarkers(map, bsaRecords, vmRecords, markersArray, showRecord) {
   // clear all markers on the map
   markersArray.forEach((marker) => marker.setMap(null));
